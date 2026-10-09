@@ -56,6 +56,28 @@
 					"taskId": "",
 					"mode": "run"
 				}
+			},
+			{
+				"title": "$Browser.Title",
+				"tip": "$Browser.Tip",
+				"cid": "de.amekudzi.microgulp.browser",
+				"config": {
+					"keyType": "dynamic",
+					"platform": [
+						"windows",
+						"mac"
+					]
+				},
+				"style": {
+					"icon": "mdi mdi-view-column",
+					"width": 480
+				},
+				"data": {
+					"workspacePath": "",
+					"followActive": false,
+					"width": 480,
+					"subkeyNum": 0
+				}
 			}
 		]
 	},
@@ -73,6 +95,17 @@
 					"ModeRun": "Start / stop the task",
 					"ModeWatch": "Toggle µWatch",
 					"Refresh": "Refresh"
+				}
+			},
+			"Browser": {
+				"Title": "µGulp Browser",
+				"Tip": "Browse groups and tasks on the Flexbar. Opening a group never starts a task.",
+				"UI": {
+					"Workspace": "Workspace folder",
+					"Follow": "Follow active IDE project",
+					"FollowHint": "Uses µGulp active-project context. Ambiguous focus does not pick a workspace.",
+					"Width": "Container width (px)",
+					"Hint": "Drag once onto the bar. Child keys (max 16) show navigation and tasks with embedded icons."
 				}
 			}
 		}

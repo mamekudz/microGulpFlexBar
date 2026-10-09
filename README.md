@@ -8,7 +8,12 @@ This repository contains only the shipped plugin layout required by FlexGate / F
 
 ## Purpose
 
-Run µGulp™ tasks from an ENIAC Flexbar key. The plugin talks to a local µGulp™ hardware-control session on the same machine. Live task states (icons / start-stop) follow the µGulp™ runtime when a session is available.
+Control µGulp™ from an ENIAC Flexbar:
+
+1. **µGulp Task** - assign one workspace task to a key (start/stop, optional µWatch toggle).
+2. **µGulp Browser** - dynamic key (up to 16 child slots) that browses groups and tasks with live embedded icons. Opening a group never starts a task.
+
+Live states follow the µGulp™ runtime when a local hardware-control session is available. Optional workspace colors (background / foreground, 0-2 stops) from the µGulp™ project identity tint browser key plates when configured.
 
 ## Status
 
@@ -34,11 +39,19 @@ Sideload for review / local test: download the `.flexplugin` asset from the matc
 
 ## After install
 
+### Single task key
+
 1. Open the workspace in µGulp™ and wait until tasks are loaded.
 2. Enable hardware control and confirm the session is active.
 3. In FlexDesigner, drag **µGulp → µGulp Task** onto a Flexbar key.
 4. Set the workspace folder, choose **Refresh**, then pick a task.
 5. Key action **Start / stop the task** runs or stops the task. **Toggle µWatch** only arms/disarms the file trigger.
+
+### Browser key
+
+1. Drag **µGulp → µGulp Browser** once onto the bar (wide dynamic container).
+2. Set the workspace folder, or enable **Follow active IDE project** when using µGulp active-project context.
+3. Child keys show navigation (back / home / page) and tasks with embedded icons. Press a group to open it; press a task to start/stop it.
 
 ## Repository layout
 
@@ -58,9 +71,9 @@ de.amekudzi.microgulp.plugin/
 
 | Path | Role |
 | :--- | :--- |
-| `de.amekudzi.microgulp.plugin/manifest.json` | Plugin identity, version, SDK, key library |
+| `de.amekudzi.microgulp.plugin/manifest.json` | Plugin identity, version, SDK, key library (Task + Browser) |
 | `de.amekudzi.microgulp.plugin/backend/` | Bundled runtime (`plugin.cjs`) + vendored `@resvg/resvg-wasm` |
-| `de.amekudzi.microgulp.plugin/ui/` | FlexDesigner config page (`task.vue`) |
+| `de.amekudzi.microgulp.plugin/ui/` | FlexDesigner config pages (`task.vue`, `browser.vue`) |
 | `de.amekudzi.microgulp.plugin/resources/` | Plugin logo |
 | `LICENSE` | Proprietary µGulp™ license |
 | `THIRD_PARTY/` | Notices for bundled third-party components |

@@ -21,7 +21,7 @@ var node_path = require('node:path');
 var node_url = require('node:url');
 var node_http = require('node:http');
 var node_os = require('node:os');
-require('node:crypto');
+var node_crypto = require('node:crypto');
 require('node:zlib');
 
 var _documentCurrentScript = typeof document !== 'undefined' ? document.currentScript : null;
@@ -31827,6 +31827,35 @@ function RenderTaskIcon(_source, _options = {}) {
 	return frame.replace('</svg>', `${overlay}</svg>`);
 }
 
+// ===========================================
+// DeviceNavigationIcons.mjs - device tree navigation motifs
+// © 2026 Meinolf Amekudzi
+// ===========================================
+
+/**
+ * Five navigation identifiers for the hardware tree browser. They are not task
+ * types and stay out of `TASK_ICON_REGISTRY`. Artwork lives under
+ * `dev/media/final/device-navigation/` and is mirrored into
+ * `src/webview/shared/device-navigation/` by `_SyncDeviceNavigationAssets`.
+ *
+ * @module DeviceNavigationIcons
+ */
+
+const DEVICE_NAVIGATION_GROUP = 'navigation.group';
+const DEVICE_NAVIGATION_BACK = 'navigation.back';
+const DEVICE_NAVIGATION_HOME = 'navigation.home';
+const DEVICE_NAVIGATION_PREVIOUS = 'navigation.previous';
+const DEVICE_NAVIGATION_NEXT = 'navigation.next';
+
+/** Exact asset IDs in stable order. */
+const DEVICE_NAVIGATION_IDS = Object.freeze([
+	DEVICE_NAVIGATION_GROUP,
+	DEVICE_NAVIGATION_BACK,
+	DEVICE_NAVIGATION_HOME,
+	DEVICE_NAVIGATION_PREVIOUS,
+	DEVICE_NAVIGATION_NEXT,
+]);
+
 // Shared semantic contract. No IDE, DOM, hardware or asset dependencies.
 const BURN_MS = 2000;
 
@@ -31844,7 +31873,7 @@ const DEFINITIONS = {
 	fonts: ['fonts', 'font'], audio: ['audio', 'sound'], video: ['video'], security: ['security', 'audit'],
 	backup: ['backup'], restore: ['restore'], translate: ['translate', 'i18n', 'i18x'], default: ['default'],
 };
-Object.freeze(Object.entries(DEFINITIONS).map(([_id, _matches]) =>
+const TASK_ICON_REGISTRY = Object.freeze(Object.entries(DEFINITIONS).map(([_id, _matches]) =>
 	Object.freeze({ id: _id, matches: Object.freeze(_matches), runningAnimation: `${_id}-running` })));
 new Set(Object.keys(DEFINITIONS));
 
@@ -32816,11 +32845,1726 @@ function _KeyId(_serialNumber, _keyUid) {
 	return `${_serialNumber}::${_keyUid}`;
 }
 
+// ===========================================
+// DeviceTaskTree.mjs - device-independent navigation projection
+// © 2026 Meinolf Amekudzi
+// ===========================================
+
+
+/** Tuple discriminators. Short on purpose: ids travel through profile files. */
+const KIND_CODES = Object.freeze({ root: 'r', source: 's', group: 'g', task: 't' });
+const KIND_BY_CODE = Object.freeze({ r: 'root', s: 'source', g: 'group', t: 'task' });
+
+function _Base64Url(_text) {
+	return Buffer.from(_text, 'utf8').toString('base64')
+		.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function _FromBase64Url(_text) {
+	let padded = String(_text ?? '').replace(/-/g, '+').replace(/_/g, '/');
+	while (padded.length % 4 !== 0) padded += '=';
+	return Buffer.from(padded, 'base64').toString('utf8');
+}
+
+/**
+ * Opaque, collision-free node id. Never split an id on `@`, `/` or `::`.
+ * @param {'root'|'source'|'group'|'task'} _kind
+ * @param {string} [_source] source-relative gulpfile path
+ * @param {string} [_key] normalized group path, or the untouched task id
+ * @returns {string}
+ */
+function EncodeDeviceNodeId(_kind, _source = '', _key = '') {
+	let code = KIND_CODES[_kind];
+	if (!code) throw new Error('Unknown device node kind: ' + _kind);
+	let tuple = code === 'r' ? [code] : [code, String(_source ?? ''), String(_key ?? '')];
+	return _Base64Url(JSON.stringify(tuple));
+}
+
+/**
+ * @param {unknown} _id
+ * @returns {{ kind: 'root'|'source'|'group'|'task', source: string, key: string }|null}
+ */
+function DecodeDeviceNodeId(_id) {
+	if (typeof _id !== 'string' || !_id) return null;
+	let tuple;
+	try {
+		tuple = JSON.parse(_FromBase64Url(_id));
+	} catch {
+		return null;
+	}
+	if (!Array.isArray(tuple) || typeof tuple[0] !== 'string') return null;
+	let kind = KIND_BY_CODE[tuple[0]];
+	if (!kind) return null;
+	if (kind === 'root') return { kind, source: '', key: '' };
+	if (typeof tuple[1] !== 'string' || typeof tuple[2] !== 'string') return null;
+	return { kind, source: tuple[1], key: tuple[2] };
+}
+
+/**
+ * Ancestor candidates for a vanished node, closest first. A rescan that drops
+ * `Build/Assets` lands on `Build`, then the source, then the root - without
+ * needing the device's own back stack.
+ * @param {string} _id
+ * @returns {string[]}
+ */
+function DeviceNodeAncestorIds(_id) {
+	let decoded = DecodeDeviceNodeId(_id);
+	if (!decoded || decoded.kind === 'root') return [];
+	let ids = [];
+	if (decoded.kind === 'group') {
+		let segments = decoded.key.split('/').filter(Boolean);
+		for (let end = segments.length - 1; end > 0; end--) {
+			ids.push(EncodeDeviceNodeId('group', decoded.source, segments.slice(0, end).join('/')));
+		}
+	}
+	ids.push(EncodeDeviceNodeId('source', decoded.source, ''));
+	ids.push(EncodeDeviceNodeId('root'));
+	return ids;
+}
+
+/**
+ * Resolves a stored cursor position after a rescan: the node itself, else the
+ * closest surviving ancestor, else the root.
+ * @param {{ rootId: string, nodes: Record<string, object> }} _tree
+ * @param {string} _nodeId
+ * @returns {string}
+ */
+function ResolveDeviceNodeId(_tree, _nodeId) {
+	let nodes = _tree?.nodes ?? {};
+	let rootId = _tree?.rootId ?? EncodeDeviceNodeId('root');
+	if (typeof _nodeId === 'string' && nodes[_nodeId] && nodes[_nodeId].kind !== 'task') return _nodeId;
+	for (let candidate of DeviceNodeAncestorIds(_nodeId)) {
+		if (nodes[candidate] && nodes[candidate].kind !== 'task') return candidate;
+	}
+	return rootId;
+}
+
+/**
+ * @param {{ nodes: Record<string, object> }} _tree
+ * @param {string} _nodeId
+ * @returns {object[]} direct children in final order
+ */
+function DeviceNodeChildren(_tree, _nodeId) {
+	let node = _tree?.nodes?.[_nodeId];
+	if (!node) return [];
+	return (node.children ?? []).map((_id) => _tree.nodes[_id]).filter(Boolean);
+}
+
+// ===========================================
+// DeviceNavigationSession.mjs - local device cursor over the core tree
+// © 2026 Meinolf Amekudzi
+// ===========================================
+
+
+class DeviceNavigationSession {
+	/**
+	 * @param {object} [_options]
+	 * @param {string} [_options.nodeId] restored cursor
+	 * @param {string[]} [_options.stack] restored ancestor pages
+	 */
+	constructor(_options = {}) {
+		this.rootId = EncodeDeviceNodeId('root');
+		this.nodeId = typeof _options.nodeId === 'string' && _options.nodeId ? _options.nodeId : this.rootId;
+		/** Parent pages, so Back returns to the page the user came from. */
+		this.stack = Array.isArray(_options.stack) ? _options.stack.filter((_id) => typeof _id === 'string') : [];
+		this.page = 0;
+		this.instanceId = null;
+		/**
+		 * Increments on every visible change. A key event that carries an older
+		 * generation is stale - the slot may already hold a different node.
+		 */
+		this.generation = 1;
+		this.tree = null;
+	}
+
+	/**
+	 * Applies a fresh snapshot. A transient scan keeps the previous tree so the
+	 * device does not blank out and a delayed press does not resolve against an
+	 * empty menu.
+	 * @param {object} _snapshot core snapshot with `deviceTree`
+	 * @returns {boolean} true when the visible page may have changed
+	 */
+	Apply(_snapshot) {
+		let tree = _snapshot?.deviceTree;
+		let instanceId = _snapshot?.instanceId ?? null;
+		if (this.instanceId !== null && instanceId !== this.instanceId) {
+			// A different engine instance invalidates every stored node id.
+			this.Reset();
+		}
+		this.instanceId = instanceId;
+		if (_snapshot?.scanning === true && this.tree) return false;
+		if (!tree || typeof tree.rootId !== 'string' || !tree.nodes) return false;
+		this.tree = tree;
+		this.rootId = tree.rootId;
+		let resolved = ResolveDeviceNodeId(tree, this.nodeId);
+		let changed = resolved !== this.nodeId;
+		if (changed) {
+			// The node vanished with a rescan: drop the part of the back stack
+			// that no longer exists instead of offering dead parents.
+			this.stack = this.stack.filter((_id) => tree.nodes[_id] && tree.nodes[_id].kind !== 'task');
+			this.page = 0;
+		}
+		this.nodeId = resolved;
+		this.generation++;
+		return true;
+	}
+
+	Reset() {
+		this.nodeId = this.rootId;
+		this.stack = [];
+		this.page = 0;
+		this.generation++;
+	}
+
+	/** @returns {boolean} */
+	get atRoot() {
+		return this.nodeId === this.rootId;
+	}
+
+	/**
+	 * @param {string} _nodeId group or source node
+	 * @returns {boolean} false when the target is unknown or a task
+	 */
+	Open(_nodeId) {
+		let node = this.tree?.nodes?.[_nodeId];
+		if (!node || node.kind === 'task') return false;
+		this.stack.push(this.nodeId);
+		this.nodeId = _nodeId;
+		this.page = 0;
+		this.generation++;
+		return true;
+	}
+
+	/**
+	 * One level up. Restores the page the user came from by walking the stack;
+	 * falls back to the tree parent when the stack is empty (fresh session or
+	 * a rescan that pruned it).
+	 * @returns {boolean} false at the root - the caller decides what to do
+	 *   there (Stream Deck: leave the browser profile).
+	 */
+	Back() {
+		if (this.atRoot) return false;
+		let target = null;
+		while (this.stack.length > 0) {
+			let candidate = this.stack.pop();
+			if (this.tree?.nodes?.[candidate] && this.tree.nodes[candidate].kind !== 'task') {
+				target = candidate;
+				break;
+			}
+		}
+		if (!target) target = this.tree?.nodes?.[this.nodeId]?.parentId ?? this.rootId;
+		this.nodeId = target;
+		this.page = 0;
+		this.generation++;
+		return true;
+	}
+
+	/** Workspace root of this session. Never switches workspace or releases a pin. */
+	Root() {
+		if (this.atRoot) return false;
+		this.nodeId = this.rootId;
+		this.stack = [];
+		this.page = 0;
+		this.generation++;
+		return true;
+	}
+
+	/**
+	 * @param {number} _delta -1 or +1
+	 * @param {number} _pageSize content slots per page
+	 * @returns {boolean}
+	 */
+	Turn(_delta, _pageSize) {
+		let pages = this.PageCount(_pageSize);
+		let target = this.page + (Number(_delta) || 0);
+		// Hard bounds, no wrap: the first and last page disable their arrow.
+		if (target < 0 || target >= pages) return false;
+		this.page = target;
+		this.generation++;
+		return true;
+	}
+
+	/**
+	 * @param {number} _pageSize
+	 * @returns {number} at least 1, so an empty group still renders a page
+	 */
+	PageCount(_pageSize) {
+		let size = Math.max(1, Math.trunc(Number(_pageSize) || 1));
+		let total = DeviceNodeChildren(this.tree, this.nodeId).length;
+		return Math.max(1, Math.ceil(total / size));
+	}
+
+	/** @returns {object[]} children of the current node in core order */
+	Children() {
+		return DeviceNodeChildren(this.tree, this.nodeId);
+	}
+
+	/**
+	 * Current page projected onto a key grid.
+	 * @param {{ supported: boolean, keyCount: number, back: number, root: number,
+	 *   previous: number, next: number, content: number[] }} _layout
+	 * @returns {{ supported: boolean, generation: number, nodeId: string, label: string,
+	 *   page: number, pageCount: number, slots: object[] }}
+	 */
+	BuildPage(_layout) {
+		let node = this.tree?.nodes?.[this.nodeId] ?? null;
+		if (!_layout?.supported) {
+			return {
+				supported: false, generation: this.generation, nodeId: this.nodeId,
+				label: node?.label ?? '', page: 0, pageCount: 1, slots: [],
+			};
+		}
+		let pageSize = _layout.content.length;
+		let children = this.Children();
+		let pageCount = Math.max(1, Math.ceil(children.length / Math.max(1, pageSize)));
+		if (this.page >= pageCount) this.page = pageCount - 1;
+		let start = this.page * pageSize;
+		let slots = [];
+		let parentId = this.stack.length > 0
+			? this.stack[this.stack.length - 1]
+			: (node?.parentId ?? null);
+		let parentLabel = parentId ? (this.tree?.nodes?.[parentId]?.label ?? '') : '';
+		slots.push({
+			index: _layout.back,
+			role: 'back',
+			icon: DEVICE_NAVIGATION_BACK,
+			// At the root there is nothing above inside µGulp; the adapter turns
+			// this into "leave the browser", not into a task.
+			action: this.atRoot ? 'exit' : 'back',
+			state: 'ready',
+			label: this.atRoot ? '' : parentLabel,
+		});
+		slots.push({
+			index: _layout.root,
+			role: 'root',
+			icon: DEVICE_NAVIGATION_HOME,
+			action: 'root',
+			state: this.atRoot ? 'disabled' : 'ready',
+			label: this.tree?.nodes?.[this.rootId]?.label ?? '',
+		});
+		slots.push({
+			index: _layout.previous,
+			role: 'previous',
+			icon: DEVICE_NAVIGATION_PREVIOUS,
+			action: 'previous',
+			state: this.page > 0 ? 'ready' : 'disabled',
+			label: '',
+		});
+		slots.push({
+			index: _layout.next,
+			role: 'next',
+			icon: DEVICE_NAVIGATION_NEXT,
+			action: 'next',
+			state: this.page + 1 < pageCount ? 'ready' : 'disabled',
+			label: '',
+		});
+		for (let offset = 0; offset < pageSize; offset++) {
+			let index = _layout.content[offset];
+			let child = children[start + offset] ?? null;
+			if (!child) {
+				slots.push({ index, role: 'empty', action: 'none', state: 'disabled', label: '' });
+				continue;
+			}
+			if (child.kind === 'task') {
+				slots.push({
+					index, role: 'task', action: 'task', nodeId: child.id, taskId: child.taskId,
+					label: child.label, state: 'ready',
+				});
+				continue;
+			}
+			slots.push({
+				index, role: 'group', action: 'open', nodeId: child.id,
+				icon: child.icon ?? DEVICE_NAVIGATION_GROUP,
+				label: child.label,
+				// A group whose whole subtree is disabled still opens: the user
+				// must be able to look inside and read why.
+				state: child.attention === true ? 'attention' : (child.allTasksDisabled === true ? 'content-disabled' : 'ready'),
+			});
+		}
+		return {
+			supported: true,
+			generation: this.generation,
+			nodeId: this.nodeId,
+			label: node?.label ?? '',
+			page: this.page,
+			pageCount,
+			slots: slots.sort((_a, _b) => _a.index - _b.index),
+		};
+	}
+}
+
+// ===========================================
+// FlexbarBrowserLayout.mjs - linear Dynamic Key paging
+// © 2026 Meinolf Amekudzi
+// ===========================================
+
+
+/** Official FlexDesigner Dynamic Key child limit (SDK 1.0.6+). */
+const FLEXBAR_DYNAMIC_MAX_KEYS = 16;
+/** Default child key width in px (container width is separate). */
+const FLEXBAR_BROWSER_CHILD_WIDTH = 160;
+/** Flexbar strip height used for plate rendering (Direct Draw docs: 60px). */
+const FLEXBAR_KEY_HEIGHT_PX$1 = 60;
+
+/**
+ * @param {object} [_options]
+ * @param {number} [_options.maxKeys]
+ * @param {number} [_options.childCount]
+ * @returns {{
+ *   supported: boolean,
+ *   maxKeys: number,
+ *   back: number,
+ *   root: number,
+ *   previous: number,
+ *   next: number,
+ *   content: number[],
+ *   pageSize: number,
+ *   needsPaging: boolean,
+ * }}
+ */
+function BuildFlexbarBrowserLayout(_options = {}) {
+	let maxKeys = Math.min(
+		FLEXBAR_DYNAMIC_MAX_KEYS,
+		Math.max(4, Math.trunc(Number(_options.maxKeys) || FLEXBAR_DYNAMIC_MAX_KEYS)),
+	);
+	let childCount = Math.max(0, Math.trunc(Number(_options.childCount) || 0));
+	let fixedNav = 2;
+	let provisionalContent = maxKeys - fixedNav;
+	let needsPaging = childCount > provisionalContent;
+	let navCount = needsPaging ? 4 : 2;
+	let pageSize = Math.max(1, maxKeys - navCount);
+	let content = [];
+	for (let i = 0; i < pageSize; i++) content.push(fixedNav + i);
+	return {
+		supported: true,
+		maxKeys,
+		back: 0,
+		root: 1,
+		previous: needsPaging ? fixedNav + pageSize : -1,
+		next: needsPaging ? fixedNav + pageSize + 1 : -1,
+		content,
+		pageSize,
+		needsPaging,
+	};
+}
+
+/**
+ * Projects a DeviceNavigationSession onto a Flexbar linear layout.
+ * @param {object} _session DeviceNavigationSession-like
+ * @param {object} [_options]
+ * @param {number} [_options.maxKeys]
+ */
+function BuildFlexbarBrowserPage(_session, _options = {}) {
+	let tree = _session?.tree ?? null;
+	let nodeId = _session?.nodeId ?? tree?.rootId ?? '';
+	let atRoot = _session?.atRoot === true || nodeId === _session?.rootId;
+	let children = typeof _session?.Children === 'function'
+		? _session.Children()
+		: DeviceNodeChildren(tree, nodeId);
+	let layout = BuildFlexbarBrowserLayout({
+		maxKeys: _options.maxKeys,
+		childCount: children.length,
+	});
+	let pageSize = layout.pageSize;
+	let pageCount = Math.max(1, Math.ceil(children.length / pageSize));
+	let page = Math.max(0, Math.min(pageCount - 1, Math.trunc(Number(_session?.page) || 0)));
+	if (_session && _session.page !== page) _session.page = page;
+	let start = page * pageSize;
+	let node = tree?.nodes?.[nodeId] ?? null;
+	let parentId = Array.isArray(_session?.stack) && _session.stack.length > 0
+		? _session.stack[_session.stack.length - 1]
+		: (node?.parentId ?? null);
+	let parentLabel = parentId ? (tree?.nodes?.[parentId]?.label ?? '') : '';
+	let slots = [];
+	slots.push({
+		index: layout.back,
+		role: 'back',
+		icon: DEVICE_NAVIGATION_BACK,
+		action: atRoot ? 'exit' : 'back',
+		state: 'ready',
+		label: atRoot ? '' : parentLabel,
+	});
+	slots.push({
+		index: layout.root,
+		role: 'root',
+		icon: DEVICE_NAVIGATION_HOME,
+		action: 'root',
+		state: atRoot ? 'disabled' : 'ready',
+		label: tree?.nodes?.[_session?.rootId]?.label ?? '',
+	});
+	for (let offset = 0; offset < pageSize; offset++) {
+		let index = layout.content[offset];
+		let child = children[start + offset] ?? null;
+		if (!child) {
+			slots.push({ index, role: 'empty', action: 'none', state: 'disabled', label: '' });
+			continue;
+		}
+		if (child.kind === 'task') {
+			slots.push({
+				index, role: 'task', action: 'task', nodeId: child.id, taskId: child.taskId,
+				label: child.label, state: 'ready',
+			});
+			continue;
+		}
+		slots.push({
+			index, role: 'group', action: 'open', nodeId: child.id,
+			icon: child.icon ?? DEVICE_NAVIGATION_GROUP,
+			label: child.label,
+			state: child.attention === true ? 'attention'
+				: (child.allTasksDisabled === true ? 'content-disabled' : 'ready'),
+		});
+	}
+	if (layout.needsPaging) {
+		slots.push({
+			index: layout.previous,
+			role: 'previous',
+			icon: DEVICE_NAVIGATION_PREVIOUS,
+			action: 'previous',
+			state: page > 0 ? 'ready' : 'disabled',
+			label: '',
+		});
+		slots.push({
+			index: layout.next,
+			role: 'next',
+			icon: DEVICE_NAVIGATION_NEXT,
+			action: 'next',
+			state: page + 1 < pageCount ? 'ready' : 'disabled',
+			label: '',
+		});
+	}
+	return {
+		supported: true,
+		generation: Number(_session?.generation) || 1,
+		nodeId,
+		label: node?.label ?? '',
+		page,
+		pageCount,
+		slots,
+		layout,
+	};
+}
+
+/**
+ * @param {number} _containerWidth
+ * @param {number} _childCount
+ * @returns {number[]}
+ */
+function DistributeFlexbarChildWidths(_containerWidth, _childCount) {
+	let count = Math.max(1, Math.trunc(Number(_childCount) || 1));
+	let total = Math.max(60, Math.trunc(Number(_containerWidth) || 240));
+	let each = Math.max(60, Math.floor(total / count));
+	return Array.from({ length: count }, () => each);
+}
+
+// ===========================================
+// ProjectColors.mjs - optional workspace key colors (bg / fg)
+// © 2026 Meinolf Amekudzi
+// ===========================================
+
+
+/**
+ * Derived plate paints for a hardware key. Empty channels mean "use default skin".
+ * @param {{ background?: string[], foreground?: string[] }|null|undefined} _colors
+ * @returns {{
+ *   backgroundFill: string|null,
+ *   backgroundGradient: { from: string, to: string }|null,
+ *   foregroundFill: string|null,
+ *   foregroundGradient: { from: string, to: string }|null,
+ * }}
+ */
+function DeriveKeyColorPaints(_colors) {
+	let background = Array.isArray(_colors?.background) ? _colors.background : [];
+	let foreground = Array.isArray(_colors?.foreground) ? _colors.foreground : [];
+	return {
+		backgroundFill: background.length === 1 ? background[0] : null,
+		backgroundGradient: background.length >= 2
+			? { from: background[0], to: background[1] }
+			: null,
+		foregroundFill: foreground.length === 1 ? foreground[0] : null,
+		foregroundGradient: foreground.length >= 2
+			? { from: foreground[0], to: foreground[1] }
+			: null,
+	};
+}
+
+// ===========================================
+// FlexbarKeyPlate.mjs - wide Flexbar key SVG plates
+// © 2026 Meinolf Amekudzi
+// ===========================================
+
+
+const DEFAULT_BG = '#163542';
+const DEFAULT_BORDER = 'rgba(181,231,241,0.35)';
+const DEFAULT_FG = '#b5e7f1';
+const DEFAULT_CAPTION = '#e8f4f8';
+
+const STATUS_BADGE = Object.freeze({
+	running: { fill: '#2ec4b6', text: '▶' },
+	starting: { fill: '#2ec4b6', text: '…' },
+	stopping: { fill: '#f6cd49', text: '■' },
+	'waiting-for-input': { fill: '#f6cd49', text: '?' },
+	failed: { fill: '#e85d4c', text: '!' },
+	finished: { fill: '#7dcfb6', text: '✓' },
+	offline: { fill: '#8a9ba8', text: '⌀' },
+	disconnected: { fill: '#8a9ba8', text: '⌀' },
+	license: { fill: '#c33da3', text: '🔒' },
+	watch: { fill: '#5dade2', text: '◉' },
+	attention: { fill: '#f0a500', text: '!' },
+});
+
+/**
+ * @param {object} _options
+ * @param {number} [_options.width]
+ * @param {number} [_options.height]
+ * @param {string} [_options.label]
+ * @param {string} [_options.iconSvg] raw SVG markup (64×64 viewBox typical)
+ * @param {boolean} [_options.monochromeIcon] tint with foreground colors
+ * @param {{ background?: string[], foreground?: string[] }|null} [_options.colors]
+ * @param {string|null} [_options.status] running|failed|offline|watch|…
+ * @param {string|null} [_options.stateLabel] extra caption (e.g. Offline)
+ * @param {boolean} [_options.disabled]
+ * @returns {string} SVG data URL
+ */
+function ComposeFlexbarKeyPlate(_options = {}) {
+	let width = Math.max(60, Math.round(Number(_options.width) || 160));
+	let height = Math.max(40, Math.round(Number(_options.height) || FLEXBAR_KEY_HEIGHT_PX$1));
+	let paints = DeriveKeyColorPaints(_options.colors);
+	let bgFill = paints.backgroundFill || DEFAULT_BG;
+	let fgFill = paints.foregroundFill || DEFAULT_FG;
+	let captionFill = paints.foregroundFill || DEFAULT_CAPTION;
+	let label = _EscapeXml(String(_options.label ?? '').trim());
+	let status = typeof _options.status === 'string' ? _options.status : null;
+	let disabled = _options.disabled === true;
+	let opacity = disabled ? '0.45' : '1';
+
+	let defs = [];
+	let bgPaint = bgFill;
+	if (paints.backgroundGradient) {
+		defs.push(
+			`<linearGradient id="mgBg" x1="0" y1="0" x2="1" y2="0">`
+			+ `<stop offset="0" stop-color="${_EscapeXml(paints.backgroundGradient.from)}"/>`
+			+ `<stop offset="1" stop-color="${_EscapeXml(paints.backgroundGradient.to)}"/>`
+			+ `</linearGradient>`,
+		);
+		bgPaint = 'url(#mgBg)';
+	}
+	let iconPaint = fgFill;
+	if (paints.foregroundGradient) {
+		defs.push(
+			`<linearGradient id="mgFg" x1="0" y1="0" x2="1" y2="0">`
+			+ `<stop offset="0" stop-color="${_EscapeXml(paints.foregroundGradient.from)}"/>`
+			+ `<stop offset="1" stop-color="${_EscapeXml(paints.foregroundGradient.to)}"/>`
+			+ `</linearGradient>`,
+		);
+		iconPaint = 'url(#mgFg)';
+		captionFill = paints.foregroundGradient.from;
+	}
+
+	let iconBox = Math.min(height - 8, 44);
+	let iconX = 8;
+	let iconY = Math.round((height - iconBox) / 2);
+	let captionX = iconX + iconBox + 8;
+	let captionWidth = Math.max(20, width - captionX - 28);
+	let badge = status && STATUS_BADGE[status] ? STATUS_BADGE[status] : null;
+
+	let iconInner = '';
+	if (_options.iconSvg) {
+		let raw = String(_options.iconSvg);
+		// Strip outer svg wrapper if present; place into a nested svg.
+		let inner = raw.replace(/^[\s\S]*?<svg[^>]*>/i, '').replace(/<\/svg>\s*$/i, '');
+		if (_options.monochromeIcon !== false) {
+			inner = _ForceMonochrome(inner, iconPaint);
+		}
+		iconInner = `<svg x="${iconX}" y="${iconY}" width="${iconBox}" height="${iconBox}" viewBox="0 0 64 64" opacity="${opacity}">${inner}</svg>`;
+	}
+
+	let badgeSvg = '';
+	if (badge) {
+		let bx = width - 22;
+		let by = 6;
+		badgeSvg = `<g data-status="${_EscapeXml(status)}">`
+			+ `<circle cx="${bx}" cy="${by + 8}" r="9" fill="${badge.fill}" stroke="#0a1216" stroke-width="1"/>`
+			+ `<text x="${bx}" y="${by + 12}" text-anchor="middle" font-size="11" font-family="Segoe UI,Arial,sans-serif" fill="#0a1216">${_EscapeXml(badge.text)}</text>`
+			+ `</g>`;
+	}
+
+	let caption = label
+		? `<text x="${captionX}" y="${Math.round(height / 2) + 5}" font-size="14" font-family="Segoe UI,Arial,sans-serif" fill="${_EscapeXml(captionFill)}" opacity="${opacity}">${_TruncateLabel(label, captionWidth)}</text>`
+		: '';
+	if (_options.stateLabel) {
+		caption += `<text x="${captionX}" y="${height - 8}" font-size="10" font-family="Segoe UI,Arial,sans-serif" fill="${badge?.fill || '#8a9ba8'}">${_EscapeXml(String(_options.stateLabel))}</text>`;
+	}
+
+	let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+		+ (defs.length ? `<defs>${defs.join('')}</defs>` : '')
+		+ `<rect width="${width}" height="${height}" rx="8" fill="${bgPaint}"/>`
+		+ `<rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="7.5" fill="none" stroke="${DEFAULT_BORDER}" stroke-width="1"/>`
+		+ iconInner
+		+ caption
+		+ badgeSvg
+		+ `</svg>`;
+	return EncodeSvgDataUrl(svg);
+}
+
+/**
+ * Offline / empty / license placeholder plate.
+ * @param {object} _options
+ */
+function ComposeFlexbarStatusPlate(_options = {}) {
+	return ComposeFlexbarKeyPlate({
+		width: _options.width,
+		height: _options.height,
+		label: _options.label || 'µGulp',
+		stateLabel: _options.stateLabel || 'Offline',
+		status: _options.status || 'offline',
+		colors: _options.colors,
+		iconSvg: _options.iconSvg || _OfflineIconSvg(),
+		monochromeIcon: true,
+	});
+}
+
+function _OfflineIconSvg() {
+	return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="18" fill="none" stroke="#b5e7f1" stroke-width="3"/><path d="M20 44 44 20" stroke="#b5e7f1" stroke-width="3" stroke-linecap="round"/></svg>';
+}
+
+function _ForceMonochrome(_inner, _paint) {
+	// Replace hard-coded fills/strokes that look like cyan/yellow brand strokes
+	// with the workspace foreground paint; leave none/transparent alone.
+	return String(_inner)
+		.replace(/stroke="(?!none|transparent)[^"]+"/gi, `stroke="${_paint}"`)
+		.replace(/fill="(?!none|transparent)[^"]+"/gi, `fill="${_paint}"`);
+}
+
+function _EscapeXml(_text) {
+	return String(_text)
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;');
+}
+
+function _TruncateLabel(_label, _maxPx) {
+	// Rough: ~8px per character at 14px font.
+	let maxChars = Math.max(4, Math.floor(_maxPx / 8));
+	if (_label.length <= maxChars) return _label;
+	return _label.slice(0, Math.max(1, maxChars - 1)) + '…';
+}
+
+/** Serialize read/modify/write across IDE and controller processes. */
+function WithStoreLock(_file, _update) {
+	node_fs.mkdirSync(node_path.dirname(_file), { recursive: true });
+	let lock = _file + '.lock';
+	let deadline = Date.now() + 2000;
+	let handle;
+	while (handle === undefined) {
+		try { handle = node_fs.openSync(lock, 'wx'); }
+		catch (_error) {
+			// Windows may report a sharing violation while another process deletes its lock.
+			if (!['EEXIST', 'EPERM', 'EACCES'].includes(_error.code)) throw _error;
+			if (Date.now() >= deadline) throw new Error('Store is busy: ' + _file);
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+		}
+	}
+	try { return _update(); }
+	finally { node_fs.closeSync(handle); node_fs.unlinkSync(lock); }
+}
+
+/** Do not silently replace malformed user data with an empty registry. */
+function ReadStore(_file, _fallback) {
+	try { return JSON.parse(node_fs.readFileSync(_file, 'utf8')); }
+	catch (_error) { if (_error.code === 'ENOENT') return _fallback; throw _error; }
+}
+
+function WriteStore(_file, _value) {
+	node_fs.mkdirSync(node_path.dirname(_file), { recursive: true });
+	let temp = _file + '.' + node_crypto.randomUUID() + '.tmp';
+	try {
+		// Flush before rename: after a hard reset Windows kept the renamed
+		// metadata of an unflushed write and the file read back as NUL bytes.
+		let handle = node_fs.openSync(temp, 'wx', 0o600);
+		try {
+			node_fs.writeFileSync(handle, JSON.stringify(_value, null, '\t') + '\n');
+			node_fs.fsyncSync(handle);
+		} finally { node_fs.closeSync(handle); }
+		node_fs.renameSync(temp, _file);
+	} finally { if (node_fs.existsSync(temp)) node_fs.unlinkSync(temp); }
+}
+
+/**
+ * Stable project id. Windows paths compare case-insensitively.
+ * This is the workspace root, not a second project-config format.
+ * @param {string} _projectRoot
+ */
+function ProjectIdFromRoot(_projectRoot) {
+	let root = _SafeRoot(_projectRoot);
+	if (!root) return '';
+	return process.platform === 'win32' ? root.toLowerCase() : root;
+}
+
+function _SafeRoot(_value) {
+	let text = String(_value ?? '').trim();
+	if (!text || text.includes('\0') || text.includes('://')) return '';
+	if (!node_path.isAbsolute(text)) return '';
+	let absolute = node_path.resolve(node_path.normalize(text));
+	if (absolute.split(node_path.sep).some((_part) => _part === '..')) return '';
+	return absolute;
+}
+
+// ===========================================
+// IdeWindowIdentity.mjs - IDE family providers for the foreground window
+// © 2026 Meinolf Amekudzi
+// ===========================================
+
+/**
+ * Maps an OS foreground sample onto a registered IDE session.
+ * Stable window handles and host process ids are shared.
+ * Each IDE family only adds what that family can actually identify.
+ * Window titles are a JetBrains fallback for a session that has not
+ * registered a handle yet. Visual Studio Code and Cursor do not use titles.
+ *
+ * @module IdeWindowIdentity
+ */
+
+const JETBRAINS_STEMS = [
+	'idea',
+	'idea64',
+	'webstorm64',
+	'webstorm',
+	'phpstorm64',
+	'phpstorm',
+	'pycharm64',
+	'pycharm',
+	'rider64',
+	'rider',
+	'clion64',
+	'clion',
+	'goland64',
+	'goland',
+	'rubymine64',
+	'rubymine',
+	'datagrip64',
+	'datagrip',
+	'studio64',
+];
+
+/**
+ * @param {string} _processName
+ */
+function ProcessStem(_processName) {
+	return String(_processName ?? '').trim().toLowerCase().replace(/\.exe$/, '');
+}
+
+/**
+ * @param {string} _family
+ * @param {string[]} _stems
+ * @param {boolean} _allowsTitleFallback
+ */
+function _Provider(_family, _stems, _allowsTitleFallback) {
+	let stems = new Set(_stems);
+	return {
+		family: _family,
+		allowsTitleFallback: _allowsTitleFallback,
+		canResolve(_foreground) {
+			return stems.has(ProcessStem(_foreground?.processName));
+		},
+		resolve(_foreground, _sessions) {
+			if (!_allowsTitleFallback) {
+				return _WithoutProject(_family);
+			}
+			let open = (_sessions ?? []).filter((_row) => _FamilyOf(_row) === _family && !_row.windowHandle);
+			let title = String(_foreground?.title ?? '');
+			let hits = title ? open.filter((_row) => _TitleMatches(title, _row)) : [];
+			if (hits.length > 1) hits = _PreferLongestTitle(title, hits);
+			if (hits.length === 1) return _FromSession(hits[0], 'title');
+			if (hits.length > 1) return _Ambiguous('title');
+			return _WithoutProject(_family);
+		},
+	};
+}
+
+Object.freeze([
+	_Provider('cursor', ['cursor'], false),
+	_Provider('windsurf', ['windsurf'], false),
+	_Provider('vscode', ['code', 'code - oss'], false),
+	_Provider('jetbrains', JETBRAINS_STEMS, true),
+]);
+
+function _FamilyOf(_session) {
+	return _session?.ideFamily || _session?.ideType || '';
+}
+
+function _FromSession(_session, _resolution) {
+	let family = _FamilyOf(_session);
+	if (_session.connected === false) {
+		return { state: 'disconnected', resolution: _resolution, session: _session, ideType: family, ideFamily: family };
+	}
+	return { state: 'project', resolution: _resolution, session: _session, ideType: family, ideFamily: family };
+}
+
+function _Ambiguous(_resolution) {
+	return { state: 'ambiguous', resolution: _resolution, session: null, ideType: '', ideFamily: '' };
+}
+
+function _WithoutProject(_family) {
+	return {
+		state: 'ide-without-project',
+		resolution: 'process-name',
+		session: null,
+		ideType: _family,
+		ideFamily: _family,
+	};
+}
+
+function _TitleMatches(_title, _session) {
+	let needles = [_session.projectTitle, _session.projectRoot ? _BaseName(_session.projectRoot) : '']
+		.filter((_item) => _item && String(_item).trim().length >= 2);
+	return needles.some((_needle) => _ContainsToken(_title, _needle));
+}
+
+function _PreferLongestTitle(_title, _sessions) {
+	let ranked = _sessions.map((_session) => ({
+		session: _session,
+		length: _BestNeedleLength(_title, _session),
+	}));
+	let best = ranked.reduce((_max, _row) => Math.max(_max, _row.length), 0);
+	return ranked.filter((_row) => _row.length === best).map((_row) => _row.session);
+}
+
+function _BestNeedleLength(_title, _session) {
+	let needles = [_session.projectTitle, _BaseName(_session.projectRoot)];
+	let best = 0;
+	for (let needle of needles) {
+		if (_ContainsToken(_title, needle)) best = Math.max(best, String(needle).trim().length);
+	}
+	return best;
+}
+
+function _BaseName(_root) {
+	let text = String(_root ?? '').replace(/[\\/]+$/, '');
+	let parts = text.split(/[\\/]/);
+	return parts[parts.length - 1] || '';
+}
+
+function _ContainsToken(_haystack, _needle) {
+	let hay = String(_haystack ?? '').toLowerCase();
+	let needle = String(_needle ?? '').trim().toLowerCase();
+	if (needle.length < 2) return false;
+	let at = hay.indexOf(needle);
+	while (at >= 0) {
+		let beforeOk = at === 0 || /[^a-z0-9]/i.test(hay.charAt(at - 1));
+		let end = at + needle.length;
+		let afterOk = end >= hay.length || /[^a-z0-9]/i.test(hay.charAt(end));
+		if (beforeOk && afterOk) return true;
+		at = hay.indexOf(needle, at + 1);
+	}
+	return false;
+}
+
+// ===========================================
+// ActiveProjectService.mjs - one active µGulp project
+// © 2026 Meinolf Amekudzi
+// ===========================================
+
+
+const ACTIVE_PROJECT_FILENAME = 'active-project.json';
+
+/**
+ * @param {string} [_home]
+ */
+function ActiveProjectSnapshotPath(_home = node_os.homedir()) {
+	return node_path.join(_home, '.microgulp', ACTIVE_PROJECT_FILENAME);
+}
+
+/**
+ * @param {object} [_options]
+ */
+function ReadActiveProjectSnapshot(_options = {}) {
+	let file = _options.path || ActiveProjectSnapshotPath(_options.home);
+	if (!node_fs.existsSync(file)) return null;
+	try {
+		let parsed = JSON.parse(node_fs.readFileSync(file, 'utf8'));
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+		// Placeholder "{}" from an older Settings-hang workaround is not a
+		// snapshot. Stream Deck treats mode !== 'project' as release and
+		// tears down an open browser profile - missing file must stay null.
+		if (typeof parsed.mode !== 'string' || !parsed.mode) return null;
+		if (!Number.isFinite(Number(parsed.version))) return null;
+		return parsed;
+	} catch {
+		return null;
+	}
+}
+
+const CONTROLLER_VIEWS_FILENAME = 'controller-views.json';
+const CONTROLLER_VIEWS_VERSION = 1;
+const CONTROLLER_TYPE_FLEXBAR = 'flexbar';
+
+const DEVICE_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const TYPE_PATTERN = /^[a-z0-9-]{1,32}$/;
+
+/**
+ * @param {string} [_home]
+ */
+function ControllerViewsPath(_home = node_os.homedir()) {
+	return node_path.join(_home, '.microgulp', CONTROLLER_VIEWS_FILENAME);
+}
+
+/**
+ * @param {unknown} _type
+ * @param {unknown} _deviceId
+ */
+function NormalizeDeviceKey(_type, _deviceId) {
+	let controllerType = String(_type ?? '').trim().toLowerCase();
+	let deviceId = String(_deviceId ?? '').trim();
+	if (['__proto__', 'constructor', 'prototype'].includes(controllerType) || ['__proto__', 'constructor', 'prototype'].includes(deviceId)) return null;
+	if (!TYPE_PATTERN.test(controllerType)) return null;
+	if (!DEVICE_ID_PATTERN.test(deviceId)) return null;
+	return { controllerType, deviceId };
+}
+
+/**
+ * @param {object} [_options]
+ * @returns {{ version: number, projects: Record<string, object> }}
+ */
+function ReadControllerViews(_options = {}) {
+	let file = _options.path || ControllerViewsPath(_options.home);
+	if (!node_fs.existsSync(file)) return { version: CONTROLLER_VIEWS_VERSION, projects: {} };
+	try {
+		let parsed = JSON.parse(node_fs.readFileSync(file, 'utf8'));
+		let projects = parsed?.projects && typeof parsed.projects === 'object' ? parsed.projects : {};
+		return { version: CONTROLLER_VIEWS_VERSION, projects };
+	} catch {
+		return { version: CONTROLLER_VIEWS_VERSION, projects: {} };
+	}
+}
+
+/**
+ * @param {string} _projectId
+ * @param {string} _controllerType
+ * @param {string} _deviceId
+ * @param {object} [_options]
+ * @returns {{ path: string[], page: number, updatedAt: number }|null}
+ */
+function ReadDeviceView(_projectId, _controllerType, _deviceId, _options = {}) {
+	let key = NormalizeDeviceKey(_controllerType, _deviceId);
+	let projectId = String(_projectId ?? '');
+	if (!key || !projectId) return null;
+	let store = ReadControllerViews(_options);
+	let entry = store.projects?.[projectId]?.[key.controllerType]?.[key.deviceId];
+	if (!entry || !Array.isArray(entry.path)) return null;
+	return {
+		path: entry.path.filter((_id) => typeof _id === 'string' && _id),
+		page: Math.max(0, Math.trunc(Number(entry.page) || 0)),
+		updatedAt: Number(entry.updatedAt) || 0,
+	};
+}
+
+/**
+ * @param {string} _projectId
+ * @param {string} _controllerType
+ * @param {string} _deviceId
+ * @param {{ path?: string[], page?: number }} _navigation
+ * @param {object} [_options]
+ */
+function WriteDeviceView(_projectId, _controllerType, _deviceId, _navigation, _options = {}) {
+	let key = NormalizeDeviceKey(_controllerType, _deviceId);
+	let projectId = String(_projectId ?? '');
+	if (!key || !projectId) return null;
+	let file = _options.path || ControllerViewsPath(_options.home);
+	return WithStoreLock(file, () => {
+	let store = ReadStore(file, { version: CONTROLLER_VIEWS_VERSION, projects: {} });
+	if (store.version !== CONTROLLER_VIEWS_VERSION || !store.projects || typeof store.projects !== 'object' || Array.isArray(store.projects)) throw new Error('Unsupported view store.');
+	let projects = store.projects;
+	if (!projects[projectId] || typeof projects[projectId] !== 'object') projects[projectId] = {};
+	if (!projects[projectId][key.controllerType]) projects[projectId][key.controllerType] = {};
+	let saved = {
+		path: Array.isArray(_navigation?.path) ? _navigation.path.filter((_id) => typeof _id === 'string' && _id).slice(0, 32) : [],
+		page: Math.max(0, Math.trunc(Number(_navigation?.page) || 0)),
+		updatedAt: _options.now ?? Date.now(),
+	};
+	projects[projectId][key.controllerType][key.deviceId] = saved;
+	WriteStore(file, { version: CONTROLLER_VIEWS_VERSION, projects });
+	return saved;
+	});
+}
+
+// Safe SVG load boundary for semantic task icons. Validates pack-relative
+// theme overrides; the renderer must only receive output from this module.
+
+const MAX_TASK_ICON_BYTES = 64 * 1024;
+
+// The build mirrors dev/media/final/task-icons/source/ into src/ because dev/
+// never ships. A checkout that has not been built yet falls back to the art
+// source, so the repo and every package resolve the same icons.
+const SHIPPED_SOURCE_DIR = node_path.resolve(
+	node_url.fileURLToPath(new URL('../webview/shared/task-icons/', (typeof document === 'undefined' ? require('u' + 'rl').pathToFileURL(__filename).href : (_documentCurrentScript && _documentCurrentScript.tagName.toUpperCase() === 'SCRIPT' && _documentCurrentScript.src || new URL('plugin.cjs', document.baseURI).href)))),
+);
+const ART_SOURCE_DIR = node_path.resolve(
+	node_url.fileURLToPath(new URL('../../dev/media/final/task-icons/source/', (typeof document === 'undefined' ? require('u' + 'rl').pathToFileURL(__filename).href : (_documentCurrentScript && _documentCurrentScript.tagName.toUpperCase() === 'SCRIPT' && _documentCurrentScript.src || new URL('plugin.cjs', document.baseURI).href)))),
+);
+const BUILTIN_SOURCE_DIR = node_fs.existsSync(node_path.join(SHIPPED_SOURCE_DIR, 'task.svg'))
+	? SHIPPED_SOURCE_DIR
+	: ART_SOURCE_DIR;
+
+const SHIPPED_INDICATOR_DIR = node_path.resolve(
+	node_url.fileURLToPath(new URL('../webview/shared/ide-indicators/', (typeof document === 'undefined' ? require('u' + 'rl').pathToFileURL(__filename).href : (_documentCurrentScript && _documentCurrentScript.tagName.toUpperCase() === 'SCRIPT' && _documentCurrentScript.src || new URL('plugin.cjs', document.baseURI).href)))),
+);
+const ART_INDICATOR_DIR = node_path.resolve(
+	node_url.fileURLToPath(new URL('../../dev/media/final/ide-indicators/', (typeof document === 'undefined' ? require('u' + 'rl').pathToFileURL(__filename).href : (_documentCurrentScript && _documentCurrentScript.tagName.toUpperCase() === 'SCRIPT' && _documentCurrentScript.src || new URL('plugin.cjs', document.baseURI).href)))),
+);
+node_fs.existsSync(node_path.join(SHIPPED_INDICATOR_DIR, 'source'))
+	? SHIPPED_INDICATOR_DIR
+	: ART_INDICATOR_DIR;
+
+const SHIPPED_NAVIGATION_DIR = node_path.resolve(
+	node_url.fileURLToPath(new URL('../webview/shared/device-navigation/', (typeof document === 'undefined' ? require('u' + 'rl').pathToFileURL(__filename).href : (_documentCurrentScript && _documentCurrentScript.tagName.toUpperCase() === 'SCRIPT' && _documentCurrentScript.src || new URL('plugin.cjs', document.baseURI).href)))),
+);
+const ART_NAVIGATION_DIR = node_path.resolve(
+	node_url.fileURLToPath(new URL('../../dev/media/final/device-navigation/', (typeof document === 'undefined' ? require('u' + 'rl').pathToFileURL(__filename).href : (_documentCurrentScript && _documentCurrentScript.tagName.toUpperCase() === 'SCRIPT' && _documentCurrentScript.src || new URL('plugin.cjs', document.baseURI).href)))),
+);
+const BUILTIN_NAVIGATION_DIR = node_fs.existsSync(node_path.join(SHIPPED_NAVIGATION_DIR, 'source', 'navigation.group.svg'))
+	? SHIPPED_NAVIGATION_DIR
+	: ART_NAVIGATION_DIR;
+
+const BLOCKED_TAGS = /<(?:script|foreignObject|image|use|animate|set|iframe|object|embed|link|style)\b/i;
+const EVENT_HANDLER = /\bon[a-z]+\s*=/i;
+const EXTERNAL_HREF = /\b(?:href|xlink:href)\s*=\s*["'](?!#)/i;
+const EXTERNAL_URL = /\burl\s*\(\s*["']?(?:https?:|data:|file:|\/\/)/i;
+const DOCTYPE_OR_ENTITY = /<!ENTITY|<!DOCTYPE/i;
+
+/**
+ * Rejects active or externally referenced SVG. Trusted Codex sources still
+ * pass this gate so theme and built-in files share one boundary.
+ * @param {unknown} _text
+ * @returns {string|null}
+ */
+function SanitizeTaskIconSvg(_text) {
+	if (typeof _text !== 'string') return null;
+	if (Buffer.byteLength(_text, 'utf8') > MAX_TASK_ICON_BYTES) return null;
+	if (!/<svg[\s>]/i.test(_text)) return null;
+	if (BLOCKED_TAGS.test(_text) || EVENT_HANDLER.test(_text) || EXTERNAL_HREF.test(_text)
+		|| EXTERNAL_URL.test(_text) || DOCTYPE_OR_ENTITY.test(_text)) return null;
+	return _text;
+}
+
+/**
+ * @param {string} _iconId
+ * @returns {string|null}
+ */
+function ReadBuiltinTaskIcon(_iconId) {
+	let id = TASK_ICON_REGISTRY.some((_entry) => _entry.id === _iconId) ? _iconId : 'task';
+	let absolute = node_path.join(BUILTIN_SOURCE_DIR, id + '.svg');
+	if (!node_fs.existsSync(absolute)) {
+		absolute = node_path.join(BUILTIN_SOURCE_DIR, 'task.svg');
+	}
+	if (!node_fs.existsSync(absolute)) return null;
+	let stat = node_fs.lstatSync(absolute);
+	if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_TASK_ICON_BYTES) return null;
+	return SanitizeTaskIconSvg(node_fs.readFileSync(absolute, 'utf8'));
+}
+
+/**
+ * Device navigation motif by exact asset id. `source` keeps the CSS variables
+ * so `RenderDeviceNavigationIcon` can paint any state; `dark`/`light` carry
+ * concrete colors for the ready state.
+ * @param {string} _navigationId
+ * @param {'source'|'dark'|'light'} [_variant]
+ * @returns {string|null}
+ */
+function ReadBuiltinDeviceNavigationIcon(_navigationId, _variant = 'source') {
+	if (!DEVICE_NAVIGATION_IDS.includes(_navigationId)) return null;
+	let variant = _variant === 'dark' || _variant === 'light' ? _variant : 'source';
+	let fileName = _navigationId + '.svg';
+	for (let candidate of [variant, 'source']) {
+		let absolute = node_path.join(BUILTIN_NAVIGATION_DIR, candidate, fileName);
+		if (!node_fs.existsSync(absolute)) continue;
+		let stat = node_fs.lstatSync(absolute);
+		if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_TASK_ICON_BYTES) continue;
+		let svg = SanitizeTaskIconSvg(node_fs.readFileSync(absolute, 'utf8'));
+		if (svg) return svg;
+	}
+	return null;
+}
+
+// ===========================================
+// FlexbarBrowserRuntime.mjs - Dynamic Key µGulp browser
+// © 2026 Meinolf Amekudzi
+// ===========================================
+
+
+const FLEXBAR_BROWSER_CID = 'de.amekudzi.microgulp.browser';
+const FLEXBAR_BROWSER_FOLLOW_POLL_MS = 750;
+
+/**
+ * @param {object} _options
+ * @param {object} _options.plugin FlexDesigner surface (dynamickey + draw)
+ * @param {Record<string, string>} [_options.sources] icon id → SVG
+ * @param {(_dataUrl: string, _size?: { width: number, height: number }) => string|Promise<string>} [_options.encode]
+ * @param {object} [_options.logger]
+ * @param {typeof fetch} [_options.fetch]
+ * @param {Function} [_options.readActiveProject]
+ * @param {Function} [_options.evaluateLicense]
+ */
+function CreateFlexbarBrowserRuntime(_options) {
+	let flex = _options.plugin;
+	let log = _options.logger ?? { info() {}, warn() {}, error() {} };
+	let sources = _options.sources ?? {};
+	let encode = _options.encode ?? ((_url) => _url);
+	/** @type {Map<string, BrowserInstance>} */
+	let instances = new Map();
+
+	async function Appear(_key, _serialNumber) {
+		let id = _InstanceId(_serialNumber, _key?.uid);
+		let settings = _NormalizeSettings(_key?.data);
+		let existing = instances.get(id);
+		if (existing) await existing.dispose();
+		let instance = new BrowserInstance({
+			id,
+			serialNumber: _serialNumber,
+			key: _key,
+			settings,
+			flex,
+			log,
+			sources,
+			encode,
+			fetch: _options.fetch,
+			readActiveProject: _options.readActiveProject || ReadActiveProjectSnapshot,
+			evaluateLicense: _options.evaluateLicense,
+		});
+		instances.set(id, instance);
+		await instance.start();
+		return instance;
+	}
+
+	async function Disappear(_serialNumber, _keyUid) {
+		let id = _InstanceId(_serialNumber, _keyUid);
+		let instance = instances.get(id);
+		if (!instance) return;
+		instances.delete(id);
+		await instance.dispose();
+	}
+
+	async function HandleData(_payload) {
+		let serialNumber = _payload?.serialNumber;
+		let key = _payload?.data?.key;
+		if (key?.cid !== FLEXBAR_BROWSER_CID) return undefined;
+		// Child presses carry userData on the payload; container presses rare.
+		let userData = _payload?.data?.userData ?? _payload?.data?.data ?? key?.userData ?? null;
+		let id = _InstanceId(serialNumber, key?.uid);
+		let instance = instances.get(id);
+		if (!instance) {
+			await Appear(key, serialNumber);
+			instance = instances.get(id);
+		}
+		if (!instance) return { ignored: true, reason: 'unbound' };
+		return instance.handlePress(userData, _payload?.data);
+	}
+
+	async function HandleDeviceStatus(_devices) {
+		for (let instance of instances.values()) {
+			if (Array.isArray(_devices) && !_devices.some((_d) => _d?.serialNumber === instance.serialNumber)) {
+				continue;
+			}
+			await instance.repaintAll();
+		}
+	}
+
+	async function Dispose() {
+		for (let instance of [...instances.values()]) await instance.dispose();
+		instances.clear();
+	}
+
+	return {
+		Appear,
+		Disappear,
+		HandleData,
+		HandleDeviceStatus,
+		Dispose,
+		instances,
+		cid: FLEXBAR_BROWSER_CID,
+	};
+}
+
+class BrowserInstance {
+	constructor(_opts) {
+		this.id = _opts.id;
+		this.serialNumber = _opts.serialNumber;
+		this.key = _opts.key;
+		this.settings = _opts.settings;
+		this.flex = _opts.flex;
+		this.log = _opts.log;
+		this.sources = _opts.sources;
+		this.encode = _opts.encode;
+		this.fetchImpl = _opts.fetch;
+		this.readActiveProject = _opts.readActiveProject;
+		this.evaluateLicense = _opts.evaluateLicense;
+		this.session = new DeviceNavigationSession();
+		this.client = null;
+		this.unsubscribe = null;
+		this.followTimer = 0;
+		this.paintGeneration = 0;
+		this.lastSlotSig = new Map();
+		this.workspacePath = '';
+		this.projectId = '';
+		this.colors = { background: [], foreground: [] };
+		this.deviceViewId = `${this.serialNumber}:${this.key.uid}`;
+		this.disposed = false;
+	}
+
+	async start() {
+		await this._ResolveWorkspace();
+		await this._Connect();
+		this._StartFollowPoll();
+		await this.repaintAll();
+	}
+
+	async dispose() {
+		this.disposed = true;
+		this.paintGeneration++;
+		if (this.followTimer) clearInterval(this.followTimer);
+		this.followTimer = 0;
+		this.unsubscribe?.();
+		this.unsubscribe = null;
+		if (this.client) {
+			try { this.client.Close?.(); } catch { /* */ }
+			this.client = null;
+		}
+		try {
+			this.flex.dynamickey?.clear?.(this.serialNumber, this.key);
+		} catch { /* */ }
+		this._PersistView();
+	}
+
+	async handlePress(_userData, _data) {
+		if (this.disposed) return { ignored: true, reason: 'disposed' };
+		let generation = Number(_userData?.generation) || 0;
+		if (generation && generation !== this.session.generation) {
+			return { ignored: true, reason: 'stale-generation' };
+		}
+		let action = String(_userData?.action || '');
+		let page = BuildFlexbarBrowserPage(this.session, { maxKeys: FLEXBAR_DYNAMIC_MAX_KEYS });
+		if (action === 'back' || action === 'exit') {
+			if (this.session.atRoot) return { ignored: true, reason: 'at-root' };
+			this.session.Back();
+			this._PersistView();
+			await this.repaintAll();
+			return { ok: true, action };
+		}
+		if (action === 'root') {
+			this.session.Root();
+			this._PersistView();
+			await this.repaintAll();
+			return { ok: true, action };
+		}
+		if (action === 'previous') {
+			this.session.Turn(-1, page.layout.pageSize);
+			this._PersistView();
+			await this.repaintAll();
+			return { ok: true, action };
+		}
+		if (action === 'next') {
+			this.session.Turn(1, page.layout.pageSize);
+			this._PersistView();
+			await this.repaintAll();
+			return { ok: true, action };
+		}
+		if (action === 'open' && _userData?.nodeId) {
+			this.session.Open(_userData.nodeId);
+			this._PersistView();
+			await this.repaintAll();
+			return { ok: true, action: 'open' };
+		}
+		if (action === 'task' && _userData?.taskId) {
+			return this._RunTask(_userData.taskId, _data?.mode === 'watch');
+		}
+		return { ignored: true, reason: 'unknown-action' };
+	}
+
+	async repaintAll() {
+		if (this.disposed) return;
+		let gen = ++this.paintGeneration;
+		if (!this.client || this.client.disconnected) {
+			await this._PaintStatus('offline', 'Offline');
+			return;
+		}
+		let snapshot = this.client.lastSnapshot;
+		if (!snapshot?.deviceTree) {
+			await this._PaintStatus('offline', 'No tasks');
+			return;
+		}
+		this.colors = snapshot.project?.colors ?? { background: [], foreground: [] };
+		this.session.Apply(snapshot);
+		this._RestoreViewIfNeeded();
+		let page = BuildFlexbarBrowserPage(this.session, { maxKeys: FLEXBAR_DYNAMIC_MAX_KEYS });
+		if (gen !== this.paintGeneration) return;
+		await this._SyncDynamicKeys(page, gen);
+	}
+
+	async _SyncDynamicKeys(_page, _gen) {
+		let dk = this.flex.dynamickey;
+		if (!dk) return;
+		let slots = _page.slots ?? [];
+		let widths = DistributeFlexbarChildWidths(
+			this.settings.width || (slots.length * FLEXBAR_BROWSER_CHILD_WIDTH),
+			slots.length,
+		);
+		try {
+			dk.clear(this.serialNumber, this.key);
+		} catch (error) {
+			this.log.warn?.('dynamickey.clear: ' + (error?.message ?? error));
+		}
+		this.lastSlotSig.clear();
+		for (let i = 0; i < slots.length; i++) {
+			if (_gen !== this.paintGeneration || this.disposed) return;
+			let slot = slots[i];
+			let width = widths[i] || FLEXBAR_BROWSER_CHILD_WIDTH;
+			let plate = this._PlateForSlot(slot, width, _page.generation);
+			let encoded = await Promise.resolve(this.encode(plate, { width, height: FLEXBAR_KEY_HEIGHT_PX$1 }));
+			if (_gen !== this.paintGeneration || this.disposed) return;
+			let userData = {
+				action: slot.action,
+				nodeId: slot.nodeId ?? null,
+				taskId: slot.taskId ?? null,
+				generation: _page.generation,
+				role: slot.role,
+			};
+			try {
+				dk.add(this.serialNumber, this.key, i, 'base64', encoded, width, userData);
+				this.lastSlotSig.set(i, _SlotSig(slot, width));
+			} catch (error) {
+				this.log.warn?.('dynamickey.add: ' + (error?.message ?? error));
+			}
+		}
+		try {
+			dk.refresh?.(this.serialNumber, this.key);
+		} catch { /* */ }
+	}
+
+	_PlateForSlot(_slot, _width, _generation) {
+		let colors = this.colors;
+		if (_slot.role === 'empty') {
+			return ComposeFlexbarKeyPlate({ width: _width, height: FLEXBAR_KEY_HEIGHT_PX$1, label: '', colors, disabled: true });
+		}
+		if (_slot.role === 'task') {
+			let task = this._TaskView(_slot.taskId);
+			let iconId = task?.presentation?.icon || task?.icon;
+			let iconSvg = this._IconSvg(iconId);
+			let status = task?.presentation?.state || task?.state || null;
+			let watchOn = task?.watchEnabled === true || task?.presentation?.watch === true;
+			return ComposeFlexbarKeyPlate({
+				width: _width,
+				height: FLEXBAR_KEY_HEIGHT_PX$1,
+				label: _slot.label || task?.displayName || _slot.taskId,
+				iconSvg,
+				monochromeIcon: true,
+				colors,
+				status: status === 'inactive' && watchOn ? 'watch' : status,
+				stateLabel: watchOn && status === 'inactive' ? 'µWatch' : null,
+				disabled: task?.enabled === false,
+			});
+		}
+		let navId = _slot.icon || DEVICE_NAVIGATION_GROUP;
+		let iconSvg = this._NavSvg(navId);
+		return ComposeFlexbarKeyPlate({
+			width: _width,
+			height: FLEXBAR_KEY_HEIGHT_PX$1,
+			label: _slot.label,
+			iconSvg,
+			monochromeIcon: true,
+			colors,
+			status: _slot.state === 'attention' ? 'attention' : null,
+			disabled: _slot.state === 'disabled' || _slot.state === 'content-disabled',
+		});
+	}
+
+	_TaskView(_taskId) {
+		let tasks = this.client?.lastSnapshot?.tasks;
+		if (!Array.isArray(tasks)) return null;
+		return tasks.find((_t) => _t.id === _taskId || _t.taskId === _taskId) ?? null;
+	}
+
+	_IconSvg(_id) {
+		if (!_id) return null;
+		if (this.sources[_id]) return this.sources[_id];
+		try {
+			return ReadBuiltinTaskIcon?.(_id) || null;
+		} catch {
+			return null;
+		}
+	}
+
+	_NavSvg(_id) {
+		if (this.sources[_id]) return this.sources[_id];
+		try {
+			return ReadBuiltinDeviceNavigationIcon(_id, 'source');
+		} catch {
+			return null;
+		}
+	}
+
+	async _PaintStatus(_status, _label) {
+		let gen = ++this.paintGeneration;
+		let width = this.settings.width || 240;
+		let plate = ComposeFlexbarStatusPlate({
+			width,
+			height: FLEXBAR_KEY_HEIGHT_PX$1,
+			label: 'µGulp',
+			stateLabel: _label,
+			status: _status,
+			colors: this.colors,
+		});
+		let encoded = await Promise.resolve(this.encode(plate, { width, height: FLEXBAR_KEY_HEIGHT_PX$1 }));
+		if (gen !== this.paintGeneration || this.disposed) return;
+		try {
+			this.flex.dynamickey?.clear?.(this.serialNumber, this.key);
+			this.flex.dynamickey?.add?.(this.serialNumber, this.key, 0, 'base64', encoded, width, {
+				action: 'none', generation: this.session.generation,
+			});
+			this.flex.dynamickey?.refresh?.(this.serialNumber, this.key);
+		} catch (error) {
+			this.log.warn?.('status paint: ' + (error?.message ?? error));
+		}
+	}
+
+	async _ResolveWorkspace() {
+		if (this.settings.followActive) {
+			let snap = this.readActiveProject?.() ?? null;
+			if (snap?.mode === 'project' && snap.followActiveProject !== false && snap.projectRoot) {
+				this.workspacePath = String(snap.projectRoot);
+				this.projectId = String(snap.projectId || ProjectIdFromRoot(this.workspacePath) || '');
+				return;
+			}
+			// Ambiguous / no project: do not invent a workspace.
+			this.workspacePath = '';
+			this.projectId = '';
+			return;
+		}
+		this.workspacePath = this.settings.workspacePath;
+		this.projectId = this.workspacePath
+			? String(ProjectIdFromRoot(this.workspacePath) || '')
+			: '';
+	}
+
+	async _Connect() {
+		this.unsubscribe?.();
+		this.unsubscribe = null;
+		if (this.client) {
+			try { this.client.Close?.(); } catch { /* */ }
+			this.client = null;
+		}
+		if (!this.workspacePath) return;
+		let session = ReadControlSession(this.workspacePath, { evaluateLicense: this.evaluateLicense });
+		if (!session.ok) {
+			this.log.info?.('browser session: ' + (session.code || 'unavailable'));
+			return;
+		}
+		this.client = new HardwareControlClient({
+			url: session.url,
+			token: session.token,
+			instanceId: session.instanceId,
+		}, { fetch: this.fetchImpl });
+		this.unsubscribe = this.client.OnSnapshot((_type, _snapshot) => {
+			if (_type === 'disconnected') {
+				this.client.disconnected = true;
+				this.repaintAll().catch(() => {});
+				return;
+			}
+			this.client.lastSnapshot = _snapshot;
+			this.client.disconnected = false;
+			this.repaintAll().catch((_err) => this.log.warn?.('repaint: ' + (_err?.message ?? _err)));
+		});
+		try {
+			let snap = await this.client.Snapshot();
+			this.client.lastSnapshot = snap;
+			await this.client.Listen();
+		} catch (error) {
+			if (IsHardwareLicenseDenial(error)) {
+				await this._PaintStatus('license', 'License');
+			}
+			this.log.warn?.('browser connect: ' + (error?.message ?? error));
+			try { this.client.Close?.(); } catch { /* */ }
+			this.client = null;
+		}
+	}
+
+	_StartFollowPoll() {
+		if (!this.settings.followActive) return;
+		this.followTimer = setInterval(() => {
+			this._FollowTick().catch(() => {});
+		}, FLEXBAR_BROWSER_FOLLOW_POLL_MS);
+	}
+
+	async _FollowTick() {
+		if (this.disposed || !this.settings.followActive) return;
+		let snap = this.readActiveProject?.() ?? null;
+		let next = '';
+		if (snap?.mode === 'project' && snap.followActiveProject !== false && snap.projectRoot) {
+			next = String(snap.projectRoot);
+		}
+		if (next === this.workspacePath) return;
+		this._PersistView();
+		this.workspacePath = next;
+		this.projectId = next ? String(ProjectIdFromRoot(next) || '') : '';
+		this.session.Reset();
+		await this._Connect();
+		await this.repaintAll();
+	}
+
+	_PersistView() {
+		if (!this.projectId) return;
+		try {
+			WriteDeviceView(this.projectId, CONTROLLER_TYPE_FLEXBAR, this.deviceViewId, {
+				path: [...(this.session.stack || []), this.session.nodeId].filter(Boolean),
+				page: this.session.page,
+			});
+		} catch { /* */ }
+	}
+
+	_RestoreViewIfNeeded() {
+		if (!this.projectId || !this.session.tree) return;
+		if (this._didRestore) return;
+		this._didRestore = true;
+		let saved = ReadDeviceView(this.projectId, CONTROLLER_TYPE_FLEXBAR, this.deviceViewId);
+		if (!saved?.path?.length) return;
+		let leaf = saved.path[saved.path.length - 1];
+		if (leaf && this.session.tree.nodes?.[leaf]) {
+			this.session.stack = saved.path.slice(0, -1).filter((_id) => this.session.tree.nodes[_id]);
+			this.session.nodeId = leaf;
+			this.session.page = saved.page || 0;
+			this.session.generation++;
+		}
+	}
+
+	async _RunTask(_taskId, _watch) {
+		if (!this.client) return { ignored: true, reason: 'disconnected' };
+		let task = this._TaskView(_taskId);
+		let blocked = HardwarePressIgnore(task?.availability);
+		if (blocked) return blocked;
+		try {
+			if (_watch) {
+				let enabled = !(task?.watchEnabled === true);
+				return await this.client.Command({
+					requestId: 'flex-browser-watch-' + Date.now(),
+					action: 'set-watch',
+					taskId: _taskId,
+					enabled,
+				});
+			}
+			let presentation = task?.presentation;
+			if (presentation?.executionType === 'persistent' && presentation.runIds?.length) {
+				return await this.client.Command({
+					requestId: 'flex-browser-stop-' + Date.now(),
+					action: 'stop',
+					taskId: _taskId,
+					runId: presentation.runIds[0],
+				});
+			}
+			if (presentation?.enabled === false || task?.enabled === false) {
+				return { ignored: true, reason: 'disabled' };
+			}
+			return await this.client.Command({
+				requestId: 'flex-browser-start-' + Date.now(),
+				action: 'start',
+				taskId: _taskId,
+			});
+		} catch (error) {
+			return { ignored: true, reason: error?.message || 'failed', message: error?.message };
+		}
+	}
+}
+
+function _NormalizeSettings(_data) {
+	let width = Math.trunc(Number(_data?.width) || 480);
+	if (width < 120) width = 120;
+	if (width > 1000) width = 1000;
+	return {
+		workspacePath: typeof _data?.workspacePath === 'string' ? _data.workspacePath.trim() : '',
+		followActive: _data?.followActive === true || _data?.followActive === 'true',
+		width,
+	};
+}
+
+function _InstanceId(_serial, _uid) {
+	return `${_serial}::${_uid}`;
+}
+
+function _SlotSig(_slot, _width) {
+	return [
+		_slot.role, _slot.action, _slot.nodeId || '', _slot.taskId || '',
+		_slot.label || '', _slot.state || '', _width,
+	].join('|');
+}
+
+// FlexDesigner handlers for the Dynamic Key µGulp browser container.
+
+/**
+ * @param {object} _options
+ * @param {object} _options.plugin
+ * @param {object} [_options.logger]
+ * @param {Record<string, string>} [_options.sources]
+ * @param {Function} [_options.encode]
+ * @param {Function} [_options.runtimeFactory]
+ */
+function CreateFlexbarBrowserPlugin(_options) {
+	let flex = _options.plugin;
+	let log = _options.logger ?? { info() {}, warn() {}, error() {} };
+	let runtime = _options.runtimeFactory
+		? _options.runtimeFactory(_options)
+		: CreateFlexbarBrowserRuntime({
+			plugin: flex,
+			logger: log,
+			sources: _options.sources ?? {},
+			encode: _options.encode,
+		});
+
+	async function HandleAlive(_payload) {
+		let serialNumber = _payload?.serialNumber;
+		for (let key of _payload?.keys ?? []) {
+			if (key?.cid !== FLEXBAR_BROWSER_CID) continue;
+			await runtime.Appear(key, serialNumber);
+		}
+	}
+
+	async function HandleData(_payload) {
+		let key = _payload?.data?.key;
+		if (key?.cid !== FLEXBAR_BROWSER_CID) return undefined;
+		return runtime.HandleData(_payload);
+	}
+
+	async function HandleDead(_payload) {
+		let serialNumber = _payload?.serialNumber;
+		for (let key of _payload?.keys ?? []) {
+			if (key?.cid !== FLEXBAR_BROWSER_CID) continue;
+			await runtime.Disappear(serialNumber, key.uid);
+		}
+	}
+
+	async function HandleDeviceStatus(_devices) {
+		await runtime.HandleDeviceStatus(_devices);
+	}
+
+	async function Dispose() {
+		await runtime.Dispose();
+	}
+
+	return {
+		HandleAlive,
+		HandleData,
+		HandleDead,
+		HandleDeviceStatus,
+		Dispose,
+		runtime,
+		cid: FLEXBAR_BROWSER_CID,
+	};
+}
+
 // FlexDesigner draws a key from a base64 data URL. Docs mention PNG, so frames
 // are rasterized with the same @resvg/resvg-wasm tree Stream Deck vendors under
 // backend/vendor/resvg-wasm (no native win32-only addon, no runtime download).
 
 const FLEXBAR_KEY_SIZE_PX = 72;
+/** Strip height for wide Dynamic Key plates (FlexDesigner Direct Draw docs). */
+const FLEXBAR_KEY_HEIGHT_PX = 60;
 
 const SVG_PREFIX = 'data:image/svg+xml';
 
@@ -32944,12 +34688,27 @@ function LoadCaptionFontBuffer() {
  * @param {object} _api Resvg module
  * @returns {Buffer|null}
  */
-function _RasterizeSync(_svg, _size, _api) {
+/**
+ * @param {string} _svg
+ * @param {number|{ width?: number, height?: number }|number} _sizeOrBox
+ * @param {object} _api
+ */
+function _RasterizeSync(_svg, _sizeOrBox, _api) {
 	try {
 		let fitted = _svg.includes('xmlns=') ? _svg : _svg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
 		let fontBuffer = LoadCaptionFontBuffer();
+		let fitTo;
+		if (_sizeOrBox && typeof _sizeOrBox === 'object') {
+			let w = Math.max(1, Math.round(Number(_sizeOrBox.width) || FLEXBAR_KEY_SIZE_PX));
+			let h = Math.max(1, Math.round(Number(_sizeOrBox.height) || FLEXBAR_KEY_HEIGHT_PX));
+			// Fit to width; tall/wide SVGs keep aspect - plates already sized correctly.
+			fitTo = { mode: 'width', value: w };
+			void h;
+		} else {
+			fitTo = { mode: 'width', value: Math.max(1, Math.round(Number(_sizeOrBox) || FLEXBAR_KEY_SIZE_PX)) };
+		}
 		let options = {
-			fitTo: { mode: 'width', value: _size },
+			fitTo,
 			...(fontBuffer ? { font: { fontBuffers: [fontBuffer], loadSystemFonts: false } } : {}),
 		};
 		let png = new _api.Resvg(fitted, options).render().asPng();
@@ -32959,11 +34718,11 @@ function _RasterizeSync(_svg, _size, _api) {
 	}
 }
 
-async function _RasterizeWasm(_svg, _size) {
+async function _RasterizeWasm(_svg, _sizeOrBox) {
 	let run = _rasterQueue.then(async () => {
 		let api = await LoadResvgWasm();
 		if (!api) return null;
-		return _RasterizeSync(_svg, _size, api);
+		return _RasterizeSync(_svg, _sizeOrBox, api);
 	});
 	_rasterQueue = run.then(() => undefined, () => undefined);
 	return run;
@@ -32989,16 +34748,19 @@ function CreateImageEncoder(_options = {}) {
 	let useWasm = format !== 'svg' && injected === undefined;
 
 	let warnedMissing = false;
-	let encode = async (_dataUrl) => {
+	let encode = async (_dataUrl, _box) => {
 		if (format === 'svg') return _dataUrl;
 		let svg = DecodeSvgDataUrl(_dataUrl);
 		if (!svg) return _dataUrl;
+		let target = (_box && typeof _box === 'object' && (_box.width || _box.height))
+			? { width: Number(_box.width) || size, height: Number(_box.height) || FLEXBAR_KEY_HEIGHT_PX }
+			: size;
 		try {
 			let png = null;
 			if (syncRasterizer?.Resvg) {
-				png = _RasterizeSync(svg, size, syncRasterizer);
+				png = _RasterizeSync(svg, target, syncRasterizer);
 			} else if (useWasm) {
-				png = await _RasterizeWasm(svg, size);
+				png = await _RasterizeWasm(svg, target);
 			}
 			if (!png) {
 				if (format === 'png' && !warnedMissing) {
@@ -33052,26 +34814,48 @@ function LoadIconCatalog() {
 
 let encode = CreateImageEncoder({ onWarn: (_message) => logger$2.warn(_message) });
 encode.ready?.then((_api) => {
-	logger$2.info('µGulp Flexbar plugin: ' + ( _api ? 'png' : 'svg') + ' frames at ' + encode.keySizePx + 'px (resvg-wasm)');
+	logger$2.info('µGulp Flexbar plugin: ' + ( _api ? 'png' : 'svg') + ' frames (resvg-wasm)');
 }).catch(() => {
-	logger$2.info('µGulp Flexbar plugin: svg frames at ' + encode.keySizePx + 'px (resvg-wasm unavailable)');
+	logger$2.info('µGulp Flexbar plugin: svg frames (resvg-wasm unavailable)');
 });
 
-let app = CreateFlexbarTaskPlugin({
+let sources = LoadIconCatalog();
+
+let taskApp = CreateFlexbarTaskPlugin({
 	plugin,
 	logger: logger$2,
-	sources: LoadIconCatalog(),
+	sources,
+	encode,
+});
+
+let browserApp = CreateFlexbarBrowserPlugin({
+	plugin,
+	logger: logger$2,
+	sources,
 	encode,
 });
 
 plugin.on('plugin.alive', (_payload) => {
-	app.HandleAlive(_payload).catch((_error) => logger$2.error('alive: ' + (_error?.message ?? _error)));
+	taskApp.HandleAlive(_payload).catch((_error) => logger$2.error('alive/task: ' + (_error?.message ?? _error)));
+	browserApp.HandleAlive(_payload).catch((_error) => logger$2.error('alive/browser: ' + (_error?.message ?? _error)));
+});
+
+plugin.on('plugin.dead', (_payload) => {
+	browserApp.HandleDead(_payload).catch((_error) => logger$2.error('dead/browser: ' + (_error?.message ?? _error)));
 });
 
 plugin.on('plugin.data', async (_payload) => {
 	try {
-		let result = await app.HandleData(_payload);
-		return result?.ignored ? { status: 'error', message: result.message ?? result.reason } : { status: 'success' };
+		let cid = _payload?.data?.key?.cid;
+		if (cid === FLEXBAR_BROWSER_CID) {
+			let result = await browserApp.HandleData(_payload);
+			return result?.ignored ? { status: 'error', message: result.message ?? result.reason } : { status: 'success' };
+		}
+		if (cid === FLEXBAR_TASK_CID) {
+			let result = await taskApp.HandleData(_payload);
+			return result?.ignored ? { status: 'error', message: result.message ?? result.reason } : { status: 'success' };
+		}
+		return { status: 'success' };
 	} catch (error) {
 		logger$2.error('data: ' + (error?.message ?? error));
 		return { status: 'error', message: String(error?.message ?? error) };
@@ -33079,12 +34863,13 @@ plugin.on('plugin.data', async (_payload) => {
 });
 
 plugin.on('device.status', (_devices) => {
-	app.HandleDeviceStatus(_devices).catch((_error) => logger$2.error('status: ' + (_error?.message ?? _error)));
+	taskApp.HandleDeviceStatus(_devices).catch((_error) => logger$2.error('status/task: ' + (_error?.message ?? _error)));
+	browserApp.HandleDeviceStatus(_devices).catch((_error) => logger$2.error('status/browser: ' + (_error?.message ?? _error)));
 });
 
 plugin.on('ui.message', async (_payload) => {
 	try {
-		return await app.HandleUiMessage(_payload);
+		return await taskApp.HandleUiMessage(_payload);
 	} catch (error) {
 		logger$2.error('ui: ' + (error?.message ?? error));
 		return { session: { allowed: false, message: String(error?.message ?? error) }, tasks: [] };
