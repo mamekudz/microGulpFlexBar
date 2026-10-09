@@ -1,0 +1,98 @@
+µGulp™ (microGulp) - Proprietary Software License Agreement
+================================================================
+
+Copyright (c) 2026 Meinolf Amekudzi. All rights reserved.
+
+This license agreement ("Agreement") governs your use of µGulp™ (the
+"Software"), including the Visual Studio Code / Cursor extension, the
+PhpStorm plugin, the bundled Node.js engine, dashboard assets, and any
+updates or documentation supplied with the Software.
+
+By installing, copying, or using the Software you accept this Agreement.
+If you do not agree, do not install or use the Software.
+
+1. GRANT OF LICENSE
+
+Subject to this Agreement, Meinolf Amekudzi grants you a personal,
+non-exclusive, non-transferable, revocable license to install and use
+the Software in object-code (binary) form for your own internal
+development and build automation purposes.
+
+The current release may be distributed at no charge. Future releases may
+offer additional paid tiers or features under separate commercial terms.
+Nothing in this Agreement obligates you to purchase a paid license.
+
+2. RESTRICTIONS
+
+You may NOT, and may NOT permit others to:
+
+  (a) copy, reproduce, or redistribute the Software or any portion of
+      it, except as expressly allowed by an authorized distribution
+      channel (e.g. the Visual Studio Marketplace or JetBrains Marketplace);
+
+  (b) modify, adapt, translate, or create derivative works based on the
+      Software or its source code;
+
+  (c) reverse engineer, decompile, disassemble, or otherwise attempt to
+      derive the source code of the Software, except to the limited
+      extent expressly permitted by applicable law notwithstanding this
+      restriction;
+
+  (d) remove, alter, or obscure any proprietary notices, trademarks, or
+      labels on or in the Software;
+
+  (e) sublicense, sell, rent, lease, lend, or otherwise transfer the
+      Software or any rights under this Agreement;
+
+  (f) use the Software to provide a competing product or service that is
+      substantially based on the Software.
+
+3. INTELLECTUAL PROPERTY
+
+The Software is licensed, not sold. Meinolf Amekudzi retains all right,
+title, and interest in and to the Software, including all copyrights,
+patents, trade secrets, trademarks, and other intellectual property
+rights. µGulp™ is a trademark of Meinolf Amekudzi.
+
+4. THIRD-PARTY COMPONENTS
+
+The Software may incorporate or interoperate with third-party open-source
+components (including npm packages in end-user Gulp projects). Such
+components remain subject to their respective licenses. The companion
+package "gulp-mu-gulp-api" is distributed separately under the MIT License.
+
+5. DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE SOFTWARE IS
+WITH YOU.
+
+6. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL
+MEINOLF AMEKUDZI BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL,
+CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS, DATA, OR
+GOODWILL, ARISING OUT OF OR RELATED TO YOUR USE OF THE SOFTWARE, EVEN IF
+ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+7. TERMINATION
+
+This Agreement terminates automatically if you breach any term. Upon
+termination you must cease all use of the Software and destroy all copies
+in your possession.
+
+8. GOVERNING LAW
+
+This Agreement is governed by the laws of the Federal Republic of
+Germany, without regard to conflict-of-law principles. Exclusive place of
+jurisdiction is, where permitted by law, the courts of Germany.
+
+9. CONTACT
+
+For licensing inquiries, commercial licenses, or permissions beyond this
+Agreement:
+
+  Meinolf Amekudzi
+  mamekudz@gmail.com

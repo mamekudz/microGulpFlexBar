@@ -1,0 +1,80 @@
+{
+	"name": "microgulp",
+	"uuid": "de.amekudzi.microgulp",
+	"version": "1.0.0",
+	"author": "Meinolf Amekudzi",
+	"entry": "backend/plugin.cjs",
+	"description": "Run µGulp tasks from an ENIAC Flexbar. Requires µGulp with hardware control enabled and an active local hardware-control session. Not available in µGulp Free.",
+	"repo": "https://github.com/mamekudz/microGulpFlexBar",
+	"sdk": {
+		"version": "1.0.9"
+	},
+	"software": {
+		"minimumVersion": "1.3.0"
+	},
+	"os": [
+		{
+			"platform": "mac",
+			"minimumVersion": "10.15"
+		},
+		{
+			"platform": "windows",
+			"minimumVersion": "10"
+		}
+	],
+	"device": [
+		{
+			"name": "flexbar",
+			"version": "1.0.0"
+		}
+	],
+	"configPage": "",
+	"keyLibrary": {
+		"title": "$PluginName",
+		"style": {
+			"icon": "mdi mdi-microscope"
+		},
+		"children": [
+			{
+				"title": "$Task.Title",
+				"tip": "$Task.Tip",
+				"cid": "de.amekudzi.microgulp.task",
+				"config": {
+					"keyType": "default",
+					"clickable": true,
+					"platform": [
+						"windows",
+						"mac"
+					]
+				},
+				"style": {
+					"icon": "mdi mdi-cog-play",
+					"width": 180
+				},
+				"data": {
+					"workspacePath": "",
+					"taskId": "",
+					"mode": "run"
+				}
+			}
+		]
+	},
+	"local": {
+		"en": {
+			"PluginName": "µGulp",
+			"Task": {
+				"Title": "µGulp Task",
+				"Tip": "Start or stop a µGulp task. Persistent tasks toggle; µWatch stays a file trigger.",
+				"UI": {
+					"Workspace": "Workspace folder",
+					"Task": "Task",
+					"NoTasks": "Open the µGulp dashboard in that workspace, then refresh.",
+					"Mode": "Key action",
+					"ModeRun": "Start / stop the task",
+					"ModeWatch": "Toggle µWatch",
+					"Refresh": "Refresh"
+				}
+			}
+		}
+	}
+}

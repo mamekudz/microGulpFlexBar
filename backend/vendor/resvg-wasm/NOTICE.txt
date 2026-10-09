@@ -1,0 +1,4 @@
+@resvg/resvg-wasm 2.6.2
+License: MPL-2.0
+Upstream: git@github.com:yisibl/resvg-js.git
+Vendored into the Flexbar plugin for offline PNG rasterization (no runtime download).

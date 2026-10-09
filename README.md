@@ -1,0 +1,66 @@
+# µGulp™ Flexbar Plugin
+
+Public FlexGate distribution of the **µGulp™** plugin for [ENIAC Flexbar](https://eniac-tech.github.io/FlexDocumentation/flexbar/en/).
+
+Product site: [https://microgulp.dev](https://microgulp.dev)
+
+This repository contains only the shipped plugin layout required by FlexGate / FlexDesigner (`manifest.json`, `backend/`, `ui/`, `resources/`). The main µGulp™ product repository stays private. Publishing here is **not** an open-source release - see [LICENSE](LICENSE).
+
+## Purpose
+
+Run µGulp™ tasks from an ENIAC Flexbar key. The plugin talks to a local µGulp™ hardware-control session on the same machine. Live task states (icons / start-stop) follow the µGulp™ runtime when a session is available.
+
+## Status
+
+**Experimental.** Windows device acceptance and macOS (Intel / Apple Silicon) hardware verification are still open. FlexCLI schema validation of this package is not a hardware acceptance test.
+
+## Prerequisites
+
+1. [FlexDesigner](https://eniac-tech.github.io/FlexDocumentation/flexbar/en/) with Flexbar support (see plugin `software.minimumVersion` in `manifest.json`).
+2. µGulp™ installed (VS Code / Cursor / JetBrains) with **hardware control enabled** for the workspace. Not available in **µGulp™ Free**.
+3. An active local hardware-control session for that workspace (dashboard settings or the IDE command that starts experimental hardware control).
+4. Node.js is used by FlexDesigner to run the plugin backend; no separate npm install is required for this plugin folder.
+
+There is currently no paid µGulp™ edition requirement beyond the existing Free vs. non-Free hardware gate.
+
+## Install (after FlexGate listing)
+
+Once the plugin is listed via FlexGate:
+
+- In FlexDesigner, install from the catalog, **or**
+- CLI: `flexcli plugin install --repo https://github.com/mamekudz/microGulpFlexBar`
+
+Sideload for review / local test: download the `.flexplugin` asset from the matching [GitHub Release](https://github.com/mamekudz/microGulpFlexBar/releases) (tag equals `manifest.json` `version`) and import it in FlexDesigner.
+
+## After install
+
+1. Open the workspace in µGulp™ and wait until tasks are loaded.
+2. Enable hardware control and confirm the session is active.
+3. In FlexDesigner, drag **µGulp → µGulp Task** onto a Flexbar key.
+4. Set the workspace folder, choose **Refresh**, then pick a task.
+5. Key action **Start / stop the task** runs or stops the task. **Toggle µWatch** only arms/disarms the file trigger.
+
+## Repository layout
+
+| Path | Role |
+| :--- | :--- |
+| `manifest.json` | Plugin identity, version, SDK, key library |
+| `backend/` | Bundled plugin runtime (`plugin.cjs`) + vendored `@resvg/resvg-wasm` |
+| `ui/` | FlexDesigner config page (`task.vue`) |
+| `resources/` | Plugin logo |
+| `LICENSE` | Proprietary µGulp™ license |
+| `THIRD_PARTY/` | Notices for bundled third-party components |
+| `UPDATE.md` | How maintainers refresh this repo from a verified main-project pack |
+
+No development sources, source maps, CI secrets, or full product tree are published here.
+
+## License
+
+Proprietary - Copyright (c) 2026 Meinolf Amekudzi. See [LICENSE](LICENSE).
+
+Bundled `@resvg/resvg-wasm` is under **MPL-2.0**; see `backend/vendor/resvg-wasm/NOTICE.txt` and [THIRD_PARTY/MPL-2.0.txt](THIRD_PARTY/MPL-2.0.txt).
+
+## Support
+
+- Product: [https://microgulp.dev](https://microgulp.dev)
+- FlexGate / Flexbar docs: [ENIAC FlexDocumentation](https://eniac-tech.github.io/FlexDocumentation/flexbar/en/)

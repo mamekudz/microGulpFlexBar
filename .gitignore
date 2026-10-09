@@ -1,0 +1,11 @@
+logs/
+*.log
+*.map
+.DS_Store
+Thumbs.db
+node_modules/
+dist/
+*.flexplugin
+.env
+.env.*
+*.local
