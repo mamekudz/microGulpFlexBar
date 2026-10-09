@@ -6,8 +6,8 @@ This FlexGate distribution of the µGulp™ Flexbar plugin includes the followin
 
 - License: Mozilla Public License 2.0 (MPL-2.0)
 - Upstream: https://github.com/yisibl/resvg-js
-- Location in this repository: `backend/vendor/resvg-wasm/`
-- Vendor notice: `backend/vendor/resvg-wasm/NOTICE.txt`
+- Location in this repository: `de.amekudzi.microgulp.plugin/backend/vendor/resvg-wasm/`
+- Vendor notice: `de.amekudzi.microgulp.plugin/backend/vendor/resvg-wasm/NOTICE.txt`
 - Full license text: [THIRD_PARTY/MPL-2.0.txt](THIRD_PARTY/MPL-2.0.txt)
 
 The WASM binary and JS wrappers are vendored for offline PNG rasterization. No runtime download. Source for this Covered Software is available from the upstream project under MPL-2.0.

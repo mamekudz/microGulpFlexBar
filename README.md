@@ -4,7 +4,7 @@ Public FlexGate distribution of the **µGulp™** plugin for [ENIAC Flexbar](htt
 
 Product site: [https://microgulp.dev](https://microgulp.dev)
 
-This repository contains only the shipped plugin layout required by FlexGate / FlexDesigner (`manifest.json`, `backend/`, `ui/`, `resources/`). The main µGulp™ product repository stays private. Publishing here is **not** an open-source release - see [LICENSE](LICENSE).
+This repository contains only the shipped plugin layout required by FlexGate / FlexDesigner. The plugin directory is **`de.amekudzi.microgulp.plugin/`** at the repository root (FlexDesigner looks for `{uuid}.plugin` with `manifest.json` inside). The main µGulp™ product repository stays private. Publishing here is **not** an open-source release - see [LICENSE](LICENSE).
 
 ## Purpose
 
@@ -16,7 +16,7 @@ Run µGulp™ tasks from an ENIAC Flexbar key. The plugin talks to a local µGul
 
 ## Prerequisites
 
-1. [FlexDesigner](https://eniac-tech.github.io/FlexDocumentation/flexbar/en/) with Flexbar support (see plugin `software.minimumVersion` in `manifest.json`).
+1. [FlexDesigner](https://eniac-tech.github.io/FlexDocumentation/flexbar/en/) with Flexbar support (see `software.minimumVersion` in `de.amekudzi.microgulp.plugin/manifest.json`).
 2. µGulp™ installed (VS Code / Cursor / JetBrains) with **hardware control enabled** for the workspace. Not available in **µGulp™ Free**.
 3. An active local hardware-control session for that workspace (dashboard settings or the IDE command that starts experimental hardware control).
 4. Node.js is used by FlexDesigner to run the plugin backend; no separate npm install is required for this plugin folder.
@@ -42,12 +42,26 @@ Sideload for review / local test: download the `.flexplugin` asset from the matc
 
 ## Repository layout
 
+```text
+README.md
+LICENSE
+NOTICE.md
+UPDATE.md
+THIRD_PARTY/
+de.amekudzi.microgulp.plugin/
+  manifest.json
+  config.json
+  backend/
+  resources/
+  ui/
+```
+
 | Path | Role |
 | :--- | :--- |
-| `manifest.json` | Plugin identity, version, SDK, key library |
-| `backend/` | Bundled plugin runtime (`plugin.cjs`) + vendored `@resvg/resvg-wasm` |
-| `ui/` | FlexDesigner config page (`task.vue`) |
-| `resources/` | Plugin logo |
+| `de.amekudzi.microgulp.plugin/manifest.json` | Plugin identity, version, SDK, key library |
+| `de.amekudzi.microgulp.plugin/backend/` | Bundled runtime (`plugin.cjs`) + vendored `@resvg/resvg-wasm` |
+| `de.amekudzi.microgulp.plugin/ui/` | FlexDesigner config page (`task.vue`) |
+| `de.amekudzi.microgulp.plugin/resources/` | Plugin logo |
 | `LICENSE` | Proprietary µGulp™ license |
 | `THIRD_PARTY/` | Notices for bundled third-party components |
 | `UPDATE.md` | How maintainers refresh this repo from a verified main-project pack |
@@ -58,7 +72,7 @@ No development sources, source maps, CI secrets, or full product tree are publis
 
 Proprietary - Copyright (c) 2026 Meinolf Amekudzi. See [LICENSE](LICENSE).
 
-Bundled `@resvg/resvg-wasm` is under **MPL-2.0**; see `backend/vendor/resvg-wasm/NOTICE.txt` and [THIRD_PARTY/MPL-2.0.txt](THIRD_PARTY/MPL-2.0.txt).
+Bundled `@resvg/resvg-wasm` is under **MPL-2.0**; see `de.amekudzi.microgulp.plugin/backend/vendor/resvg-wasm/NOTICE.txt` and [THIRD_PARTY/MPL-2.0.txt](THIRD_PARTY/MPL-2.0.txt).
 
 ## Support
 
